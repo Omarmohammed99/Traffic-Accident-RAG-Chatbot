@@ -31,6 +31,12 @@ if os.getenv("VERCEL"):
     for _cache_path in (_hf_home, _fastembed_cache):
         _cache_path.mkdir(parents=True, exist_ok=True)
 
+    # Force the already-imported Hub constants too. Some Vercel Python
+    # bootstrap paths import huggingface_hub before this module's env setup.
+    from huggingface_hub import constants as _hf_constants
+
+    _hf_constants.HF_HUB_DISABLE_XET = True
+
 import chromadb
 from fastembed import TextEmbedding
 from flask import Flask, jsonify, render_template, request
