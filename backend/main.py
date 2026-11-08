@@ -21,9 +21,8 @@ if os.getenv("VERCEL"):
     _hf_home = _runtime_cache / "huggingface"
     _fastembed_cache = _runtime_cache / "fastembed"
     os.environ["HF_HOME"] = str(_hf_home)
-    # FastEmbed already uses its own HF snapshot cache. Keep the Hub cache on
-    # that same volume and disable Xet's reconstruction path, which needs extra
-    # temporary disk space and exceeds Vercel's 500 MB /tmp limit for this model.
+    # FastEmbed downloads are streamed directly to this cache below, avoiding
+    # Hub/Xet's extra temporary reconstruction files on Vercel's small /tmp.
     os.environ["HF_HUB_CACHE"] = str(_fastembed_cache)
     os.environ["HF_HUB_DISABLE_XET"] = "1"
     os.environ["HF_XET_CACHE"] = str(_fastembed_cache / "xet")
@@ -33,19 +32,13 @@ if os.getenv("VERCEL"):
     shutil.rmtree(_hf_home, ignore_errors=True)
     _fastembed_cache.mkdir(parents=True, exist_ok=True)
     for _old_cache in _fastembed_cache.iterdir():
-        if _old_cache.name == "vercel-model":
+        if _old_cache.name == "vercel-BAAI--bge-small-en-v1.5":
             for _partial in _old_cache.rglob("*.partial"):
                 _partial.unlink(missing_ok=True)
         elif _old_cache.is_dir():
             shutil.rmtree(_old_cache, ignore_errors=True)
         else:
             _old_cache.unlink(missing_ok=True)
-
-    # Force the already-imported Hub constants too. Some Vercel Python
-    # bootstrap paths import huggingface_hub before this module's env setup.
-    from huggingface_hub import constants as _hf_constants
-
-    _hf_constants.HF_HUB_DISABLE_XET = True
 
 import chromadb
 from fastembed import TextEmbedding
@@ -65,7 +58,7 @@ PDF_PATH = Path(os.getenv("TRAFFIC_LAW_PDF", str(DEFAULT_PDF_PATH)))
 MAX_STATEMENT_CHARS = 1000
 MAX_CHAT_CHARS = 1000
 TOP_K = 2
-DEFAULT_EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 EMBEDDING_MODEL = os.getenv(
     "LOCAL_EMBEDDING_MODEL",
     DEFAULT_EMBEDDING_MODEL,
@@ -84,7 +77,7 @@ embedder: TextEmbedding | None = None
 active_embedding_model: str | None = None
 chroma = chromadb.PersistentClient(path=str(CHROMA_PATH))
 collection = chroma.get_or_create_collection(
-    name="traffic_law_multilingual_minilm_v1",
+    name="traffic_law_bge_small_translated_v1",
     metadata={"hnsw:space": "cosine"},
 )
 
@@ -99,7 +92,7 @@ def get_embedder() -> TextEmbedding:
         if model_name not in supported_models:
             if DEFAULT_EMBEDDING_MODEL not in supported_models:
                 raise RuntimeError(
-                    "The configured embedding model and the multilingual fallback "
+                    "The configured embedding model and the default fallback "
                     "are not supported by this FastEmbed version."
                 )
             app.logger.warning(
@@ -111,12 +104,34 @@ def get_embedder() -> TextEmbedding:
         cache_dir = os.getenv("FASTEMBED_CACHE_PATH")
         if os.getenv("VERCEL"):
             cache_dir = cache_dir or "/tmp/sentinel-traffic-rag/fastembed"
+            model_descriptions = TextEmbedding.list_supported_models()
             model_description = next(
-                item for item in TextEmbedding.list_supported_models()
+                item for item in model_descriptions
                 if item["model"].lower() == model_name.lower()
             )
-            model_dir = Path(cache_dir) / "vercel-model"
-            download_model_files_directly(model_description, model_dir)
+            model_dir = Path(cache_dir) / f"vercel-{model_name.replace('/', '--')}"
+            if not download_model_files_directly(model_description, model_dir):
+                if model_name.lower() == DEFAULT_EMBEDDING_MODEL.lower():
+                    raise RuntimeError(
+                        "Vercel has insufficient temporary storage even for the "
+                        "small English embedding model."
+                    )
+                app.logger.warning(
+                    "LOCAL_EMBEDDING_MODEL=%r does not fit Vercel temporary storage; "
+                    "falling back to %r.",
+                    model_name,
+                    DEFAULT_EMBEDDING_MODEL,
+                )
+                model_name = DEFAULT_EMBEDDING_MODEL
+                model_description = next(
+                    item for item in model_descriptions
+                    if item["model"].lower() == model_name.lower()
+                )
+                model_dir = Path(cache_dir) / f"vercel-{model_name.replace('/', '--')}"
+                if not download_model_files_directly(model_description, model_dir):
+                    raise RuntimeError(
+                        "Vercel has insufficient temporary storage for the embedding model."
+                    )
             embedder = TextEmbedding(
                 model_name=model_name,
                 specific_model_path=str(model_dir),
@@ -127,7 +142,7 @@ def get_embedder() -> TextEmbedding:
     return embedder
 
 
-def download_model_files_directly(model: dict, model_dir: Path) -> None:
+def download_model_files_directly(model: dict, model_dir: Path) -> bool:
     """Stream required model assets straight to /tmp without Hub/Xet staging."""
     source_repo = (model.get("sources") or {}).get("hf")
     model_file = model.get("model_file")
@@ -165,10 +180,7 @@ def download_model_files_directly(model: dict, model_dir: Path) -> None:
         required_bytes / (1024 * 1024),
     )
     if available_bytes < required_bytes:
-        raise RuntimeError(
-            "Vercel has insufficient temporary storage for the embedding model. "
-            "Clear old function cache files or use a persistent host."
-        )
+        return False
 
     with requests.Session() as session:
         for filename in required_files:
@@ -196,6 +208,35 @@ def download_model_files_directly(model: dict, model_dir: Path) -> None:
             except Exception:
                 partial_path.unlink(missing_ok=True)
                 raise
+    return True
+
+
+ARABIC_TEXT = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]")
+
+
+def english_search_text(text: str) -> str:
+    """Translate Arabic to English for compact English-only embeddings."""
+    if not ARABIC_TEXT.search(text):
+        return text
+    if not groq_client:
+        raise RuntimeError("GROQ_API_KEY is missing. Add it to backend/.env.")
+    response = groq_client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Translate the text into clear English for semantic search. "
+                    "Translate faithfully; preserve article numbers, penalties, "
+                    "negation, and legal distinctions. Return only the translation."
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
+        temperature=0,
+        max_tokens=1000,
+    )
+    return response.choices[0].message.content or text
 
 
 def chunks_from_pdf() -> list[dict]:
@@ -221,19 +262,20 @@ def ensure_index() -> None:
     if not PDF_PATH.is_file():
         raise FileNotFoundError(f"Traffic law PDF not found: {PDF_PATH}")
     source_id = hashlib.sha256(PDF_PATH.read_bytes()).hexdigest()
-    if collection.count():
-        first = collection.get(limit=1, include=["metadatas"])["metadatas"]
-        if first and first[0].get("source_id") == source_id:
-            return
-        collection.delete(where={})
     chunks = chunks_from_pdf()
     if not chunks:
         raise ValueError("No selectable text was extracted from the PDF; it may require OCR.")
+    if collection.count() == len(chunks):
+        first = collection.get(limit=1, include=["metadatas"])["metadatas"]
+        if first and first[0].get("source_id") == source_id:
+            return
+    if collection.count():
+        collection.delete(where={})
     vectorizer = get_embedder()
     for offset in range(0, len(chunks), 64):
         batch = chunks[offset : offset + 64]
-        texts = [item["text"] for item in batch]
-        vectors = list(vectorizer.embed(texts))
+        search_texts = [english_search_text(item["text"]) for item in batch]
+        vectors = list(vectorizer.embed(search_texts))
         collection.add(
             ids=[f"{source_id[:12]}-{offset + i}" for i in range(len(batch))],
             documents=[item["text"] for item in batch],
@@ -244,7 +286,12 @@ def ensure_index() -> None:
 
 def retrieve(query: str) -> list[dict]:
     ensure_index()
-    vector = next(get_embedder().embed([query]))
+    search_query = english_search_text(query)
+    vector = next(
+        get_embedder().embed(
+            ["Represent this sentence for searching relevant passages: " + search_query]
+        )
+    )
     result = collection.query(query_embeddings=[vector.tolist()], n_results=min(TOP_K, collection.count()))
     return [
         {"text": text, "page": metadata["page"]}
