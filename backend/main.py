@@ -6,16 +6,36 @@ import os
 import re
 from pathlib import Path
 
-import chromadb
 from dotenv import load_dotenv
-from fastembed import TextEmbedding
-from flask import Flask, jsonify, render_template, request
-from groq import Groq
-from pypdf import PdfReader
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BASE_DIR.parent
 load_dotenv(BASE_DIR / ".env")
+
+# Vercel's deployment image is read-only. FastEmbed's own cache_dir does not
+# control Hugging Face Hub/Xet caches, which otherwise default under $HOME.
+# Set these before importing FastEmbed (and huggingface_hub transitively).
+if os.getenv("VERCEL"):
+    _runtime_cache = Path("/tmp/sentinel-traffic-rag")
+    _hf_home = _runtime_cache / "huggingface"
+    _fastembed_cache = _runtime_cache / "fastembed"
+    os.environ["HF_HOME"] = str(_hf_home)
+    # FastEmbed already uses its own HF snapshot cache. Keep the Hub cache on
+    # that same volume and disable Xet's reconstruction path, which needs extra
+    # temporary disk space and exceeds Vercel's 500 MB /tmp limit for this model.
+    os.environ["HF_HUB_CACHE"] = str(_fastembed_cache)
+    os.environ["HF_HUB_DISABLE_XET"] = "1"
+    os.environ["HF_XET_CACHE"] = str(_fastembed_cache / "xet")
+    os.environ["XDG_CACHE_HOME"] = str(_runtime_cache / "xdg")
+    os.environ["FASTEMBED_CACHE_PATH"] = str(_fastembed_cache)
+    for _cache_path in (_hf_home, _fastembed_cache):
+        _cache_path.mkdir(parents=True, exist_ok=True)
+
+import chromadb
+from fastembed import TextEmbedding
+from flask import Flask, jsonify, render_template, request
+from groq import Groq
+from pypdf import PdfReader
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip() 
@@ -246,3 +266,4 @@ def health():
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=int(os.getenv("PORT", "5000")), debug=False)
+
