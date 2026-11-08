@@ -17,7 +17,7 @@ A bilingual (Arabic/English) Flask application that analyzes two traffic acciden
 ## 🛠️ Tech Stack
 
 - **Backend:** Flask (Python)
-- **AI model:** Groq API, default `llama-3.3-70b-versatile`
+- **AI model:** Groq API, default `openai/gpt-oss-120b`
 - **Vector store:** ChromaDB
 - **Embeddings:** FastEmbed with `intfloat/multilingual-e5-small`
 - **Frontend:** Jinja2, HTML, Tailwind CSS, custom CSS, and JavaScript
@@ -73,7 +73,7 @@ Edit `backend/.env`:
 
 ```dotenv
 GROQ_API_KEY=your_groq_api_key
-GROQ_MODEL=llama-3.3-70b-versatile
+GROQ_MODEL=openai/gpt-oss-120b
 ```
 
 Start Flask:
@@ -98,7 +98,7 @@ Open [http://127.0.0.1:5000](http://127.0.0.1:5000). The first RAG request extra
 | Variable | Default | Description |
 | --- | --- | --- |
 | `GROQ_API_KEY` | Required | Groq API credential |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq chat-completion model |
+| `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq chat-completion model |
 | `LOCAL_EMBEDDING_MODEL` | `intfloat/multilingual-e5-small` | Local multilingual embedding model |
 | `TRAFFIC_LAW_PDF` | Traffic PDF in repository root | Optional path to the law document |
 | `PORT` | `5000` | Flask development-server port |
