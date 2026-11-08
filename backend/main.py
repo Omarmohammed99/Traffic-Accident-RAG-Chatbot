@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -214,29 +215,52 @@ def download_model_files_directly(model: dict, model_dir: Path) -> bool:
 ARABIC_TEXT = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]")
 
 
-def english_search_text(text: str) -> str:
-    """Translate Arabic to English for compact English-only embeddings."""
-    if not ARABIC_TEXT.search(text):
-        return text
+def english_search_texts(texts: list[str]) -> list[str]:
+    """Translate Arabic passages in small batches for compact English embeddings."""
+    translated = list(texts)
+    arabic_indices = [index for index, text in enumerate(texts) if ARABIC_TEXT.search(text)]
+    if not arabic_indices:
+        return translated
     if not groq_client:
         raise RuntimeError("GROQ_API_KEY is missing. Add it to backend/.env.")
-    response = groq_client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Translate the text into clear English for semantic search. "
-                    "Translate faithfully; preserve article numbers, penalties, "
-                    "negation, and legal distinctions. Return only the translation."
-                ),
-            },
-            {"role": "user", "content": text},
-        ],
-        temperature=0,
-        max_tokens=1000,
-    )
-    return response.choices[0].message.content or text
+    for offset in range(0, len(arabic_indices), 8):
+        batch_indices = arabic_indices[offset : offset + 8]
+        payload = {str(i): texts[i] for i in batch_indices}
+        response = groq_client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Translate every value in the JSON object into clear English for semantic search. "
+                        "Translate faithfully; preserve article numbers, penalties, negation, and legal distinctions. "
+                        "Return only a valid JSON object with the exact same keys and translated string values."
+                    ),
+                },
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            temperature=0,
+            max_tokens=4000,
+        )
+        content = response.choices[0].message.content or ""
+        content = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", content, flags=re.IGNORECASE)
+        try:
+            batch_translations = json.loads(content)
+        except json.JSONDecodeError:
+            start, end = content.find("{"), content.rfind("}")
+            if start < 0 or end <= start:
+                raise RuntimeError("Groq did not return valid translations for legal search.")
+            batch_translations = json.loads(content[start : end + 1])
+        for index in batch_indices:
+            result = batch_translations.get(str(index))
+            if not isinstance(result, str) or not result.strip():
+                raise RuntimeError("Groq omitted a legal passage translation for search.")
+            translated[index] = result.strip()
+    return translated
+
+
+def english_search_text(text: str) -> str:
+    return english_search_texts([text])[0]
 
 
 def chunks_from_pdf() -> list[dict]:
@@ -274,7 +298,7 @@ def ensure_index() -> None:
     vectorizer = get_embedder()
     for offset in range(0, len(chunks), 64):
         batch = chunks[offset : offset + 64]
-        search_texts = [english_search_text(item["text"]) for item in batch]
+        search_texts = english_search_texts([item["text"] for item in batch])
         vectors = list(vectorizer.embed(search_texts))
         collection.add(
             ids=[f"{source_id[:12]}-{offset + i}" for i in range(len(batch))],
