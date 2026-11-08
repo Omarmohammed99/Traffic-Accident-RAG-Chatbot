@@ -18,12 +18,17 @@ load_dotenv(BASE_DIR / ".env")
 if os.getenv("VERCEL"):
     _runtime_cache = Path("/tmp/sentinel-traffic-rag")
     _hf_home = _runtime_cache / "huggingface"
+    _fastembed_cache = _runtime_cache / "fastembed"
     os.environ["HF_HOME"] = str(_hf_home)
-    os.environ["HF_HUB_CACHE"] = str(_hf_home / "hub")
-    os.environ["HF_XET_CACHE"] = str(_hf_home / "xet")
+    # FastEmbed already uses its own HF snapshot cache. Keep the Hub cache on
+    # that same volume and disable Xet's reconstruction path, which needs extra
+    # temporary disk space and exceeds Vercel's 500 MB /tmp limit for this model.
+    os.environ["HF_HUB_CACHE"] = str(_fastembed_cache)
+    os.environ["HF_HUB_DISABLE_XET"] = "1"
+    os.environ["HF_XET_CACHE"] = str(_fastembed_cache / "xet")
     os.environ["XDG_CACHE_HOME"] = str(_runtime_cache / "xdg")
-    os.environ["FASTEMBED_CACHE_PATH"] = str(_runtime_cache / "fastembed")
-    for _cache_path in (_hf_home / "hub", _hf_home / "xet", _runtime_cache / "fastembed"):
+    os.environ["FASTEMBED_CACHE_PATH"] = str(_fastembed_cache)
+    for _cache_path in (_hf_home, _fastembed_cache):
         _cache_path.mkdir(parents=True, exist_ok=True)
 
 import chromadb
