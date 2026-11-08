@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shutil
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -28,8 +29,17 @@ if os.getenv("VERCEL"):
     os.environ["HF_XET_CACHE"] = str(_fastembed_cache / "xet")
     os.environ["XDG_CACHE_HOME"] = str(_runtime_cache / "xdg")
     os.environ["FASTEMBED_CACHE_PATH"] = str(_fastembed_cache)
-    for _cache_path in (_hf_home, _fastembed_cache):
-        _cache_path.mkdir(parents=True, exist_ok=True)
+    # Remove large, incomplete snapshots left by earlier FastEmbed/Hub attempts.
+    shutil.rmtree(_hf_home, ignore_errors=True)
+    _fastembed_cache.mkdir(parents=True, exist_ok=True)
+    for _old_cache in _fastembed_cache.iterdir():
+        if _old_cache.name == "vercel-model":
+            for _partial in _old_cache.rglob("*.partial"):
+                _partial.unlink(missing_ok=True)
+        elif _old_cache.is_dir():
+            shutil.rmtree(_old_cache, ignore_errors=True)
+        else:
+            _old_cache.unlink(missing_ok=True)
 
     # Force the already-imported Hub constants too. Some Vercel Python
     # bootstrap paths import huggingface_hub before this module's env setup.
@@ -145,6 +155,19 @@ def download_model_files_directly(model: dict, model_dir: Path) -> None:
     required_files = [name for name in required_names if name in available]
     if model_file not in required_files:
         raise RuntimeError(f"Model file {model_file!r} is missing from {source_repo}.")
+
+    required_bytes = sum(available[name].get("size", 0) for name in required_files)
+    available_bytes = shutil.disk_usage(model_dir).free
+    app.logger.info(
+        "Embedding cache has %.1f MiB free; required assets total %.1f MiB.",
+        available_bytes / (1024 * 1024),
+        required_bytes / (1024 * 1024),
+    )
+    if available_bytes < required_bytes:
+        raise RuntimeError(
+            "Vercel has insufficient temporary storage for the embedding model. "
+            "Clear old function cache files or use a persistent host."
+        )
 
     model_dir.mkdir(parents=True, exist_ok=True)
     with requests.Session() as session:
