@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
-import shutil
+import math
+import unicodedata
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -14,40 +14,10 @@ BASE_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BASE_DIR.parent
 load_dotenv(BASE_DIR / ".env")
 
-# Vercel's deployment image is read-only. FastEmbed's own cache_dir does not
-# control Hugging Face Hub/Xet caches, which otherwise default under $HOME.
-# Set these before importing FastEmbed (and huggingface_hub transitively).
-if os.getenv("VERCEL"):
-    _runtime_cache = Path("/tmp/sentinel-traffic-rag")
-    _hf_home = _runtime_cache / "huggingface"
-    _fastembed_cache = _runtime_cache / "fastembed"
-    os.environ["HF_HOME"] = str(_hf_home)
-    # FastEmbed downloads are streamed directly to this cache below, avoiding
-    # Hub/Xet's extra temporary reconstruction files on Vercel's small /tmp.
-    os.environ["HF_HUB_CACHE"] = str(_fastembed_cache)
-    os.environ["HF_HUB_DISABLE_XET"] = "1"
-    os.environ["HF_XET_CACHE"] = str(_fastembed_cache / "xet")
-    os.environ["XDG_CACHE_HOME"] = str(_runtime_cache / "xdg")
-    os.environ["FASTEMBED_CACHE_PATH"] = str(_fastembed_cache)
-    # Remove large, incomplete snapshots left by earlier FastEmbed/Hub attempts.
-    shutil.rmtree(_hf_home, ignore_errors=True)
-    _fastembed_cache.mkdir(parents=True, exist_ok=True)
-    for _old_cache in _fastembed_cache.iterdir():
-        if _old_cache.name == "vercel-BAAI--bge-small-en-v1.5":
-            for _partial in _old_cache.rglob("*.partial"):
-                _partial.unlink(missing_ok=True)
-        elif _old_cache.is_dir():
-            shutil.rmtree(_old_cache, ignore_errors=True)
-        else:
-            _old_cache.unlink(missing_ok=True)
-
 import chromadb
-from fastembed import TextEmbedding
 from flask import Flask, jsonify, render_template, request
 from groq import Groq
 from pypdf import PdfReader
-import requests
-from urllib.parse import quote
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip() 
@@ -59,11 +29,7 @@ PDF_PATH = Path(os.getenv("TRAFFIC_LAW_PDF", str(DEFAULT_PDF_PATH)))
 MAX_STATEMENT_CHARS = 1000
 MAX_CHAT_CHARS = 1000
 TOP_K = 2
-DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
-EMBEDDING_MODEL = os.getenv(
-    "LOCAL_EMBEDDING_MODEL",
-    DEFAULT_EMBEDDING_MODEL,
-)
+VECTOR_DIMENSIONS = 4096
 CHROMA_PATH = Path(
     os.getenv(
         "CHROMA_PATH",
@@ -74,193 +40,72 @@ CHROMA_PATH = Path(
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
 groq_client = Groq(api_key=GROQ_API_KEY, timeout=45, max_retries=2) if GROQ_API_KEY else None
-embedder: TextEmbedding | None = None
-active_embedding_model: str | None = None
 chroma = chromadb.PersistentClient(path=str(CHROMA_PATH))
 collection = chroma.get_or_create_collection(
-    name="traffic_law_bge_small_translated_v1",
+    name="traffic_law_hashed_lexical_v1",
     metadata={"hnsw:space": "cosine"},
 )
 
 
-def get_embedder() -> TextEmbedding:
-    global embedder, active_embedding_model
-    if embedder is None:
-        supported_models = {
-            item["model"] for item in TextEmbedding.list_supported_models()
-        }
-        model_name = EMBEDDING_MODEL
-        if model_name not in supported_models:
-            if DEFAULT_EMBEDDING_MODEL not in supported_models:
-                raise RuntimeError(
-                    "The configured embedding model and the default fallback "
-                    "are not supported by this FastEmbed version."
-                )
-            app.logger.warning(
-                "FastEmbed does not support LOCAL_EMBEDDING_MODEL=%r; using %r.",
-                model_name,
-                DEFAULT_EMBEDDING_MODEL,
-            )
-            model_name = DEFAULT_EMBEDDING_MODEL
-        cache_dir = os.getenv("FASTEMBED_CACHE_PATH")
-        if os.getenv("VERCEL"):
-            cache_dir = cache_dir or "/tmp/sentinel-traffic-rag/fastembed"
-            model_descriptions = TextEmbedding.list_supported_models()
-            model_description = next(
-                item for item in model_descriptions
-                if item["model"].lower() == model_name.lower()
-            )
-            model_dir = Path(cache_dir) / f"vercel-{model_name.replace('/', '--')}"
-            if not download_model_files_directly(model_description, model_dir):
-                if model_name.lower() == DEFAULT_EMBEDDING_MODEL.lower():
-                    raise RuntimeError(
-                        "Vercel has insufficient temporary storage even for the "
-                        "small English embedding model."
-                    )
-                app.logger.warning(
-                    "LOCAL_EMBEDDING_MODEL=%r does not fit Vercel temporary storage; "
-                    "falling back to %r.",
-                    model_name,
-                    DEFAULT_EMBEDDING_MODEL,
-                )
-                model_name = DEFAULT_EMBEDDING_MODEL
-                model_description = next(
-                    item for item in model_descriptions
-                    if item["model"].lower() == model_name.lower()
-                )
-                model_dir = Path(cache_dir) / f"vercel-{model_name.replace('/', '--')}"
-                if not download_model_files_directly(model_description, model_dir):
-                    raise RuntimeError(
-                        "Vercel has insufficient temporary storage for the embedding model."
-                    )
-            embedder = TextEmbedding(
-                model_name=model_name,
-                specific_model_path=str(model_dir),
-            )
-        else:
-            embedder = TextEmbedding(model_name=model_name, cache_dir=cache_dir)
-        active_embedding_model = model_name
-    return embedder
-
-
-def download_model_files_directly(model: dict, model_dir: Path) -> bool:
-    """Stream required model assets straight to /tmp without Hub/Xet staging."""
-    source_repo = (model.get("sources") or {}).get("hf")
-    model_file = model.get("model_file")
-    if not source_repo or not model_file:
-        raise RuntimeError("The configured FastEmbed model has no Hugging Face source.")
-
-    listing_url = f"https://huggingface.co/api/models/{source_repo}/tree/main?recursive=true&expand=false"
-    listing_response = requests.get(listing_url, timeout=(15, 45))
-    listing_response.raise_for_status()
-    available = {
-        entry["path"]: entry
-        for entry in listing_response.json()
-        if isinstance(entry, dict) and isinstance(entry.get("path"), str)
-    }
-
-    required_names = {
-        "config.json",
-        "tokenizer.json",
-        "tokenizer_config.json",
-        "special_tokens_map.json",
-        "preprocessor_config.json",
-        model_file,
-        *model.get("additional_files", []),
-    }
-    required_files = [name for name in required_names if name in available]
-    if model_file not in required_files:
-        raise RuntimeError(f"Model file {model_file!r} is missing from {source_repo}.")
-
-    model_dir.mkdir(parents=True, exist_ok=True)
-    required_bytes = sum(available[name].get("size", 0) for name in required_files)
-    available_bytes = shutil.disk_usage(model_dir).free
-    app.logger.info(
-        "Embedding cache has %.1f MiB free; required assets total %.1f MiB.",
-        available_bytes / (1024 * 1024),
-        required_bytes / (1024 * 1024),
-    )
-    if available_bytes < required_bytes:
-        return False
-
-    with requests.Session() as session:
-        for filename in required_files:
-            file_info = available[filename]
-            destination = model_dir / filename
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            expected_size = file_info.get("size")
-            if destination.is_file() and destination.stat().st_size == expected_size:
-                continue
-
-            destination.unlink(missing_ok=True)
-            partial_path = destination.with_name(destination.name + ".partial")
-            partial_path.unlink(missing_ok=True)
-            url = f"https://huggingface.co/{source_repo}/resolve/main/{quote(filename, safe='/')}"
-            try:
-                with session.get(url, stream=True, timeout=(15, 180)) as response:
-                    response.raise_for_status()
-                    with partial_path.open("wb") as output:
-                        for chunk in response.iter_content(chunk_size=1024 * 1024):
-                            if chunk:
-                                output.write(chunk)
-                if expected_size is not None and partial_path.stat().st_size != expected_size:
-                    raise RuntimeError(f"Downloaded model asset {filename!r} is incomplete.")
-                partial_path.replace(destination)
-            except Exception:
-                partial_path.unlink(missing_ok=True)
-                raise
-    return True
-
-
 ARABIC_TEXT = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]")
+LATIN_TEXT = re.compile(r"[A-Za-z]")
+TOKEN_PATTERN = re.compile(r"[\w]+", re.UNICODE)
+ARABIC_STOPWORDS = {
+    "في", "من", "على", "إلى", "الى", "عن", "أن", "إن", "و", "أو", "او",
+    "ما", "لا", "لم", "لن", "هو", "هي", "هذا", "هذه", "ذلك", "التي", "الذي",
+    "كان", "تكون", "مع", "بين", "بعد", "قبل", "عند", "كل", "هل", "كما",
+}
+ENGLISH_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how",
+    "in", "is", "it", "of", "on", "or", "that", "the", "to", "was", "what",
+    "when", "where", "which", "who", "with",
+}
 
 
-def english_search_texts(texts: list[str]) -> list[str]:
-    """Translate Arabic passages in small batches for compact English embeddings."""
-    translated = list(texts)
-    arabic_indices = [index for index, text in enumerate(texts) if ARABIC_TEXT.search(text)]
-    if not arabic_indices:
-        return translated
+def arabic_search_text(text: str) -> str:
+    """Translate English or mixed-language queries into Arabic for law matching."""
+    if not LATIN_TEXT.search(text):
+        return text
     if not groq_client:
         raise RuntimeError("GROQ_API_KEY is missing. Add it to backend/.env.")
-    for offset in range(0, len(arabic_indices), 8):
-        batch_indices = arabic_indices[offset : offset + 8]
-        payload = {str(i): texts[i] for i in batch_indices}
-        response = groq_client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Translate every value in the JSON object into clear English for semantic search. "
-                        "Translate faithfully; preserve article numbers, penalties, negation, and legal distinctions. "
-                        "Return only a valid JSON object with the exact same keys and translated string values."
-                    ),
-                },
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
-            temperature=0,
-            max_tokens=4000,
-        )
-        content = response.choices[0].message.content or ""
-        content = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", content, flags=re.IGNORECASE)
-        try:
-            batch_translations = json.loads(content)
-        except json.JSONDecodeError:
-            start, end = content.find("{"), content.rfind("}")
-            if start < 0 or end <= start:
-                raise RuntimeError("Groq did not return valid translations for legal search.")
-            batch_translations = json.loads(content[start : end + 1])
-        for index in batch_indices:
-            result = batch_translations.get(str(index))
-            if not isinstance(result, str) or not result.strip():
-                raise RuntimeError("Groq omitted a legal passage translation for search.")
-            translated[index] = result.strip()
-    return translated
+    response = groq_client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Translate this traffic-law search query into concise Arabic. "
+                    "Preserve article numbers, penalties, negation, and legal distinctions. "
+                    "Return only the Arabic query."
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
+        temperature=0,
+        max_tokens=500,
+    )
+    return response.choices[0].message.content or text
 
 
-def english_search_text(text: str) -> str:
-    return english_search_texts([text])[0]
+def lexical_vector(text: str) -> list[float]:
+    """Build a small deterministic token vector for Chroma without a model file."""
+    normalized = unicodedata.normalize("NFKC", text).lower()
+    normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+    normalized = normalized.translate(str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ى": "ي"}))
+    tokens = [token for token in TOKEN_PATTERN.findall(normalized) if token not in ARABIC_STOPWORDS | ENGLISH_STOPWORDS]
+    vector = [0.0] * VECTOR_DIMENSIONS
+    terms = [(token, 1.0) for token in tokens]
+    terms.extend((f"{left}_{right}", 0.55) for left, right in zip(tokens, tokens[1:]))
+    for term, weight in terms:
+        digest = hashlib.blake2b(term.encode("utf-8"), digest_size=8).digest()
+        index = int.from_bytes(digest[:4], "little") % VECTOR_DIMENSIONS
+        sign = 1.0 if digest[4] & 1 else -1.0
+        vector[index] += sign * weight
+    norm = math.sqrt(sum(value * value for value in vector))
+    if not norm:
+        vector[0] = 1.0
+        return vector
+    return [value / norm for value in vector]
 
 
 def chunks_from_pdf() -> list[dict]:
@@ -295,28 +140,23 @@ def ensure_index() -> None:
             return
     if collection.count():
         collection.delete(where={})
-    vectorizer = get_embedder()
     for offset in range(0, len(chunks), 64):
         batch = chunks[offset : offset + 64]
-        search_texts = english_search_texts([item["text"] for item in batch])
-        vectors = list(vectorizer.embed(search_texts))
         collection.add(
             ids=[f"{source_id[:12]}-{offset + i}" for i in range(len(batch))],
             documents=[item["text"] for item in batch],
-            embeddings=[vector.tolist() for vector in vectors],
+            embeddings=[lexical_vector(item["text"]) for item in batch],
             metadatas=[{"page": item["page"], "source_id": source_id} for item in batch],
         )
 
 
 def retrieve(query: str) -> list[dict]:
     ensure_index()
-    search_query = english_search_text(query)
-    vector = next(
-        get_embedder().embed(
-            ["Represent this sentence for searching relevant passages: " + search_query]
-        )
+    search_query = arabic_search_text(query)
+    result = collection.query(
+        query_embeddings=[lexical_vector(search_query)],
+        n_results=min(TOP_K, collection.count()),
     )
-    result = collection.query(query_embeddings=[vector.tolist()], n_results=min(TOP_K, collection.count()))
     return [
         {"text": text, "page": metadata["page"]}
         for text, metadata in zip(result["documents"][0], result["metadatas"][0])
@@ -430,7 +270,7 @@ def health():
     return {
         "status": "ok",
         "model": MODEL,
-        "embedding_model": active_embedding_model or EMBEDDING_MODEL,
+        "retrieval": "hashed lexical vectors",
         "pdf_available": PDF_PATH.is_file(),
     }
 
