@@ -1,6 +1,6 @@
 # 🛡️ Sentinel AI — Bilingual Traffic Law RAG & Analysis System
 
-A bilingual (Arabic/English) Flask application that analyzes two traffic accident statements and answers traffic-law questions using retrieval-augmented generation (RAG). Groq powers the language model, ChromaDB stores the searchable law passages, and FastEmbed creates local embeddings. Arabic legal passages and Arabic queries are translated into English for compact-vector retrieval; the original Arabic passages are retained for citations and answers.
+A bilingual (Arabic/English) Flask application that analyzes two traffic accident statements and answers traffic-law questions using retrieval-augmented generation (RAG). Groq powers the language model and translates English queries to Arabic. ChromaDB stores searchable law passages using compact deterministic hashed-token vectors; original Arabic excerpts remain the citation source. This avoids downloading a large embedding model into Vercel's limited temporary filesystem.
 
 > ⚠️ **Disclaimer:** This project provides informational legal analysis only. It does not make official rulings or replace advice from a qualified legal professional.
 
@@ -10,7 +10,7 @@ A bilingual (Arabic/English) Flask application that analyzes two traffic acciden
 - **Interactive legal chatbot (`/chat`):** Answers natural-language questions about traffic regulations using the same PDF-backed RAG pipeline.
 - **Arabic and English support:** Accepts either language and responds in the language of the latest user input. The interface supports Arabic right-to-left text.
 - **Evidence-based legal citations:** Legal conclusions must identify the exact article or provision number found in retrieved PDF text. The assistant is instructed to say when it cannot verify a citation instead of inventing one. Retrieved excerpts include PDF page locators.
-- **Bilingual retrieval on serverless hosts:** Uses the compact FastEmbed `BAAI/bge-small-en-v1.5` model; Groq translates Arabic search text while the indexed and cited legal excerpts remain in the source Arabic.
+- **Serverless-friendly retrieval:** Deterministic hashed Arabic token and phrase vectors require no model download; Groq translates English search queries to Arabic while indexed legal excerpts remain in the source Arabic.
 - **Persistent vector index:** ChromaDB stores the local index and rebuilds it when the source PDF changes.
 - **Sentinel dark UI:** Futuristic Tailwind interface with an incident form and interactive legal assistant sidebar.
 
@@ -19,7 +19,7 @@ A bilingual (Arabic/English) Flask application that analyzes two traffic acciden
 - **Backend:** Flask (Python)
 - **AI model:** Groq API, default `openai/gpt-oss-120b`
 - **Vector store:** ChromaDB
-- **Embeddings:** FastEmbed with `BAAI/bge-small-en-v1.5` and Groq-assisted Arabic-to-English search translation
+- **Embeddings:** Deterministic 4,096-dimension hashed lexical vectors; Groq-assisted English-to-Arabic query translation
 - **Frontend:** Jinja2, HTML, Tailwind CSS, custom CSS, and JavaScript
 
 ## 📁 Project Structure
@@ -44,7 +44,7 @@ A bilingual (Arabic/English) Flask application that analyzes two traffic acciden
 
 - Python 3.10 or newer
 - A Groq API key
-- Internet access for dependency installation and the first local embedding-model download
+- Internet access for dependency installation and Groq API requests
 
 ### Install and run (PowerShell)
 
@@ -82,7 +82,7 @@ Start Flask:
 python main.py
 ```
 
-Open [http://127.0.0.1:5000](http://127.0.0.1:5000). The first RAG request extracts text from the PDF and builds the local ChromaDB index. The PDF is included at the repository root; set `TRAFFIC_LAW_PDF` in `backend/.env` to use a different file.
+Open [http://127.0.0.1:5000](http://127.0.0.1:5000). The first RAG request extracts text from the PDF and builds the ChromaDB index; no embedding model is downloaded. The PDF is included at the repository root; set `TRAFFIC_LAW_PDF` in `backend/.env` to use a different file.
 
 ## 🔌 API Endpoints
 
@@ -99,7 +99,6 @@ Open [http://127.0.0.1:5000](http://127.0.0.1:5000). The first RAG request extra
 | --- | --- | --- |
 | `GROQ_API_KEY` | Required | Groq API credential |
 | `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq chat-completion model |
-| `LOCAL_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | Compact FastEmbed model; Arabic text is translated for retrieval |
 | `TRAFFIC_LAW_PDF` | Traffic PDF in repository root | Optional path to the law document |
 | `PORT` | `5000` | Flask development-server port |
 
