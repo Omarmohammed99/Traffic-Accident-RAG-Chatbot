@@ -27,9 +27,10 @@ PDF_PATH = Path(os.getenv("TRAFFIC_LAW_PDF", str(DEFAULT_PDF_PATH)))
 MAX_STATEMENT_CHARS = 1000
 MAX_CHAT_CHARS = 1000
 TOP_K = 2
+DEFAULT_EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 EMBEDDING_MODEL = os.getenv(
     "LOCAL_EMBEDDING_MODEL",
-    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    DEFAULT_EMBEDDING_MODEL,
 )
 CHROMA_PATH = Path(
     os.getenv(
@@ -42,6 +43,7 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
 groq_client = Groq(api_key=GROQ_API_KEY, timeout=45, max_retries=2) if GROQ_API_KEY else None
 embedder: TextEmbedding | None = None
+active_embedding_model: str | None = None
 chroma = chromadb.PersistentClient(path=str(CHROMA_PATH))
 collection = chroma.get_or_create_collection(
     name="traffic_law_multilingual_minilm_v1",
@@ -50,12 +52,29 @@ collection = chroma.get_or_create_collection(
 
 
 def get_embedder() -> TextEmbedding:
-    global embedder
+    global embedder, active_embedding_model
     if embedder is None:
+        supported_models = {
+            item["model"] for item in TextEmbedding.list_supported_models()
+        }
+        model_name = EMBEDDING_MODEL
+        if model_name not in supported_models:
+            if DEFAULT_EMBEDDING_MODEL not in supported_models:
+                raise RuntimeError(
+                    "The configured embedding model and the multilingual fallback "
+                    "are not supported by this FastEmbed version."
+                )
+            app.logger.warning(
+                "FastEmbed does not support LOCAL_EMBEDDING_MODEL=%r; using %r.",
+                model_name,
+                DEFAULT_EMBEDDING_MODEL,
+            )
+            model_name = DEFAULT_EMBEDDING_MODEL
         cache_dir = os.getenv("FASTEMBED_CACHE_PATH")
         if not cache_dir and os.getenv("VERCEL"):
             cache_dir = "/tmp/sentinel-traffic-rag/fastembed"
-        embedder = TextEmbedding(model_name=EMBEDDING_MODEL, cache_dir=cache_dir)
+        embedder = TextEmbedding(model_name=model_name, cache_dir=cache_dir)
+        active_embedding_model = model_name
     return embedder
 
 
@@ -217,7 +236,12 @@ def chat_route():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": MODEL, "pdf_available": PDF_PATH.is_file()}
+    return {
+        "status": "ok",
+        "model": MODEL,
+        "embedding_model": active_embedding_model or EMBEDDING_MODEL,
+        "pdf_available": PDF_PATH.is_file(),
+    }
 
 
 if __name__ == "__main__":
