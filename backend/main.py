@@ -8,10 +8,10 @@ from pathlib import Path
 
 import chromadb
 from dotenv import load_dotenv
+from fastembed import TextEmbedding
 from flask import Flask, jsonify, render_template, request
 from groq import Groq
 from pypdf import PdfReader
-from sentence_transformers import SentenceTransformer
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BASE_DIR.parent
@@ -19,27 +19,40 @@ load_dotenv(BASE_DIR / ".env")
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip() 
-PDF_PATH = Path(os.getenv("TRAFFIC_LAW_PDF", str(PROJECT_DIR / "تحديد المتسبب والمتضرر في حوادث المرور.pdf")))
+PDF_NAME = "تحديد المتسبب والمتضرر في حوادث المرور.pdf"
+DEFAULT_PDF_PATH = BASE_DIR / PDF_NAME
+if not DEFAULT_PDF_PATH.is_file():
+    DEFAULT_PDF_PATH = PROJECT_DIR / PDF_NAME
+PDF_PATH = Path(os.getenv("TRAFFIC_LAW_PDF", str(DEFAULT_PDF_PATH)))
 MAX_STATEMENT_CHARS = 1000
 MAX_CHAT_CHARS = 1000
 TOP_K = 2
 EMBEDDING_MODEL = os.getenv("LOCAL_EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
+CHROMA_PATH = Path(
+    os.getenv(
+        "CHROMA_PATH",
+        "/tmp/sentinel-traffic-rag/chroma" if os.getenv("VERCEL") else str(BASE_DIR / "data" / "chroma"),
+    )
+)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
 groq_client = Groq(api_key=GROQ_API_KEY, timeout=45, max_retries=2) if GROQ_API_KEY else None
-embedder: SentenceTransformer | None = None
-chroma = chromadb.PersistentClient(path=str(BASE_DIR / "data" / "chroma"))
+embedder: TextEmbedding | None = None
+chroma = chromadb.PersistentClient(path=str(CHROMA_PATH))
 collection = chroma.get_or_create_collection(
     name="traffic_law_multilingual_e5",
     metadata={"hnsw:space": "cosine"},
 )
 
 
-def get_embedder() -> SentenceTransformer:
+def get_embedder() -> TextEmbedding:
     global embedder
     if embedder is None:
-        embedder = SentenceTransformer(EMBEDDING_MODEL)
+        cache_dir = os.getenv("FASTEMBED_CACHE_PATH")
+        if not cache_dir and os.getenv("VERCEL"):
+            cache_dir = "/tmp/sentinel-traffic-rag/fastembed"
+        embedder = TextEmbedding(model_name=EMBEDDING_MODEL, cache_dir=cache_dir)
     return embedder
 
 
@@ -78,7 +91,7 @@ def ensure_index() -> None:
     for offset in range(0, len(chunks), 64):
         batch = chunks[offset : offset + 64]
         texts = [f"passage: {item['text']}" for item in batch]
-        vectors = vectorizer.encode(texts, normalize_embeddings=True)
+        vectors = list(vectorizer.embed(texts))
         collection.add(
             ids=[f"{source_id[:12]}-{offset + i}" for i in range(len(batch))],
             documents=[item["text"] for item in batch],
@@ -89,7 +102,7 @@ def ensure_index() -> None:
 
 def retrieve(query: str) -> list[dict]:
     ensure_index()
-    vector = get_embedder().encode([f"query: {query}"], normalize_embeddings=True)[0]
+    vector = next(get_embedder().embed([f"query: {query}"]))
     result = collection.query(query_embeddings=[vector.tolist()], n_results=min(TOP_K, collection.count()))
     return [
         {"text": text, "page": metadata["page"]}
@@ -122,10 +135,9 @@ def format_sources(sources: list[dict]) -> str:
 LEGAL_SYSTEM_PROMPT = (
     "You are SENTINEL, a careful legal traffic information assistant. "
     "CRITICAL LANGUAGE RULE: You MUST reply in the exact same language as the user's latest message (Arabic if the user writes in Arabic, English if the user writes in English). "
-    "Base your legal reasoning strictly on the provided text excerpts without inventing or guessing missing article numbers. "
-    "CRITICAL: Present the judgment and reasoning directly and concisely. NEVER cite or mention source numbers, "
-    "document names, article numbers, page numbers, text excerpts, or meta-phrases such as 'according to the provided text', "
-    "'in source 1', or 'based on the excerpts'. "
+    "Base your legal reasoning strictly on the retrieved traffic-law excerpts. Explicitly cite the exact article number or legal provision shown in the excerpts, in the same language as the answer. "
+    "Never invent an article number, penalty, or legal rule. If the excerpts do not establish an article number or enough facts, say that clearly and do not guess. "
+    "Do not mention source IDs, document names, or PDF page numbers. "
     "This is informational help, not an official legal opinion."
 )
 
@@ -137,7 +149,7 @@ def analyze(party1, party2):
     prompt = (
         f"PARTY 1 STATEMENT:\n{party1}\n\nPARTY 2 STATEMENT:\n{party2}\n\n"
         f"RETRIEVED TRAFFIC-LAW EXCERPTS:\n{format_sources(sources)}\n\n"
-        "Determine who is at fault directly and briefly in 2 lines max based on the context."
+        "Determine whether Party 1 or Party 2 appears responsible based on the statements and excerpts. State the exact article number or provision from the excerpts that supports your conclusion. If the excerpts or facts do not support a reliable decision, say so instead of guessing. Keep the answer concise."
     )
     
   
@@ -188,8 +200,7 @@ def chat_route():
         prompt = (
             f"USER'S CURRENT QUESTION:\n{message.strip()}\n\n"
             f"RETRIEVED TRAFFIC-LAW EXCERPTS:\n{format_sources(sources)}\n\n"
-            "Answer the current question directly and concisely based on the evidence. "
-            "CRITICAL: Do NOT mention source numbers, document names, article numbers, or page numbers."
+            "Answer the current question directly and concisely based on the evidence. Cite the exact article number or provision shown in the excerpts. If no article is shown or the evidence is insufficient, say so rather than inventing a citation. Do not mention source IDs, document names, or PDF page numbers."
         )
         answer = generate_answer(LEGAL_SYSTEM_PROMPT, prompt, history)
         return jsonify(answer=answer, sources=sources)
