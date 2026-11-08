@@ -1,6 +1,6 @@
 # Sentinel AI traffic RAG
 
-Flask traffic accident analysis and legal Q&A using Groq for generation, ChromaDB for vector search, and FastEmbed's multilingual E5 model for local embeddings.
+Flask traffic accident analysis and legal Q&A using Groq for generation, ChromaDB for vector search, and FastEmbed's supported `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` model for local Arabic/English embeddings.
 
 ## Project layout
 

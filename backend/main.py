@@ -27,7 +27,10 @@ PDF_PATH = Path(os.getenv("TRAFFIC_LAW_PDF", str(DEFAULT_PDF_PATH)))
 MAX_STATEMENT_CHARS = 1000
 MAX_CHAT_CHARS = 1000
 TOP_K = 2
-EMBEDDING_MODEL = os.getenv("LOCAL_EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
+EMBEDDING_MODEL = os.getenv(
+    "LOCAL_EMBEDDING_MODEL",
+    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+)
 CHROMA_PATH = Path(
     os.getenv(
         "CHROMA_PATH",
@@ -41,7 +44,7 @@ groq_client = Groq(api_key=GROQ_API_KEY, timeout=45, max_retries=2) if GROQ_API_
 embedder: TextEmbedding | None = None
 chroma = chromadb.PersistentClient(path=str(CHROMA_PATH))
 collection = chroma.get_or_create_collection(
-    name="traffic_law_multilingual_e5",
+    name="traffic_law_multilingual_minilm_v1",
     metadata={"hnsw:space": "cosine"},
 )
 
@@ -90,7 +93,7 @@ def ensure_index() -> None:
     vectorizer = get_embedder()
     for offset in range(0, len(chunks), 64):
         batch = chunks[offset : offset + 64]
-        texts = [f"passage: {item['text']}" for item in batch]
+        texts = [item["text"] for item in batch]
         vectors = list(vectorizer.embed(texts))
         collection.add(
             ids=[f"{source_id[:12]}-{offset + i}" for i in range(len(batch))],
@@ -102,7 +105,7 @@ def ensure_index() -> None:
 
 def retrieve(query: str) -> list[dict]:
     ensure_index()
-    vector = next(get_embedder().embed([f"query: {query}"]))
+    vector = next(get_embedder().embed([query]))
     result = collection.query(query_embeddings=[vector.tolist()], n_results=min(TOP_K, collection.count()))
     return [
         {"text": text, "page": metadata["page"]}

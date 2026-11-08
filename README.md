@@ -10,7 +10,7 @@ A bilingual (Arabic/English) Flask application that analyzes two traffic acciden
 - **Interactive legal chatbot (`/chat`):** Answers natural-language questions about traffic regulations using the same PDF-backed RAG pipeline.
 - **Arabic and English support:** Accepts either language and responds in the language of the latest user input. The interface supports Arabic right-to-left text.
 - **Evidence-based legal citations:** Legal conclusions must identify the exact article or provision number found in retrieved PDF text. The assistant is instructed to say when it cannot verify a citation instead of inventing one. Retrieved excerpts include PDF page locators.
-- **Local multilingual embeddings:** Uses `intfloat/multilingual-e5-small` through FastEmbed to search Arabic and English text locally.
+- **Local multilingual embeddings:** Uses FastEmbed's supported `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` model to search Arabic and English text locally.
 - **Persistent vector index:** ChromaDB stores the local index and rebuilds it when the source PDF changes.
 - **Sentinel dark UI:** Futuristic Tailwind interface with an incident form and interactive legal assistant sidebar.
 
@@ -19,7 +19,7 @@ A bilingual (Arabic/English) Flask application that analyzes two traffic acciden
 - **Backend:** Flask (Python)
 - **AI model:** Groq API, default `openai/gpt-oss-120b`
 - **Vector store:** ChromaDB
-- **Embeddings:** FastEmbed with `intfloat/multilingual-e5-small`
+- **Embeddings:** FastEmbed with `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`
 - **Frontend:** Jinja2, HTML, Tailwind CSS, custom CSS, and JavaScript
 
 ## 📁 Project Structure
@@ -99,7 +99,7 @@ Open [http://127.0.0.1:5000](http://127.0.0.1:5000). The first RAG request extra
 | --- | --- | --- |
 | `GROQ_API_KEY` | Required | Groq API credential |
 | `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq chat-completion model |
-| `LOCAL_EMBEDDING_MODEL` | `intfloat/multilingual-e5-small` | Local multilingual embedding model |
+| `LOCAL_EMBEDDING_MODEL` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | FastEmbed-supported local multilingual embedding model |
 | `TRAFFIC_LAW_PDF` | Traffic PDF in repository root | Optional path to the law document |
 | `PORT` | `5000` | Flask development-server port |
 
