@@ -156,6 +156,7 @@ def download_model_files_directly(model: dict, model_dir: Path) -> None:
     if model_file not in required_files:
         raise RuntimeError(f"Model file {model_file!r} is missing from {source_repo}.")
 
+    model_dir.mkdir(parents=True, exist_ok=True)
     required_bytes = sum(available[name].get("size", 0) for name in required_files)
     available_bytes = shutil.disk_usage(model_dir).free
     app.logger.info(
@@ -169,7 +170,6 @@ def download_model_files_directly(model: dict, model_dir: Path) -> None:
             "Clear old function cache files or use a persistent host."
         )
 
-    model_dir.mkdir(parents=True, exist_ok=True)
     with requests.Session() as session:
         for filename in required_files:
             file_info = available[filename]
