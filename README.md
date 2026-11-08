@@ -1,86 +1,111 @@
-# Sentinel AI — Traffic Law RAG
+# 🛡️ Sentinel AI — Bilingual Traffic Law RAG & Analysis System
 
-A bilingual (Arabic/English) Flask application for reviewing two traffic incident statements and asking questions about the included Arabic traffic-law PDF. Groq generates answers; ChromaDB retrieves relevant passages; FastEmbed creates multilingual embeddings locally.
+A bilingual (Arabic/English) Flask application that analyzes two traffic accident statements and answers traffic-law questions using retrieval-augmented generation (RAG). Groq powers the language model, ChromaDB stores the searchable law passages, and FastEmbed creates multilingual embeddings locally.
 
-> This project provides informational analysis only. It does not make official findings of fault or replace a qualified legal professional.
+> ⚠️ **Disclaimer:** This project provides informational legal analysis only. It does not make official rulings or replace advice from a qualified legal professional.
 
-## Features
+## ✨ Key Features
 
-- Compare Party 1 and Party 2 accident statements.
-- Ask traffic-law questions in the interactive chat sidebar.
-- Retrieve supporting passages from the traffic-law PDF and show their PDF page numbers.
-- Respond in the user's language and require exact article/provision citations from retrieved evidence. If a citation cannot be verified, the assistant should say so rather than invent one.
-- Persist a local ChromaDB index; rebuild it automatically when the PDF changes.
-- Use Groq for language generation and a local multilingual embedding model for retrieval. No OpenAI service or key is required.
+- **Dual-party incident analysis (`/analyze`):** Compares Party 1 and Party 2 statements against retrieved passages from the traffic-law PDF and explains the supported conclusion and uncertainty.
+- **Interactive legal chatbot (`/chat`):** Answers natural-language questions about traffic regulations using the same PDF-backed RAG pipeline.
+- **Arabic and English support:** Accepts either language and responds in the language of the latest user input. The interface supports Arabic right-to-left text.
+- **Evidence-based legal citations:** Legal conclusions must identify the exact article or provision number found in retrieved PDF text. The assistant is instructed to say when it cannot verify a citation instead of inventing one. Retrieved excerpts include PDF page locators.
+- **Local multilingual embeddings:** Uses `intfloat/multilingual-e5-small` through FastEmbed to search Arabic and English text locally.
+- **Persistent vector index:** ChromaDB stores the local index and rebuilds it when the source PDF changes.
+- **Sentinel dark UI:** Futuristic Tailwind interface with an incident form and interactive legal assistant sidebar.
 
-## Requirements
+## 🛠️ Tech Stack
+
+- **Backend:** Flask (Python)
+- **AI model:** Groq API, default `llama-3.3-70b-versatile`
+- **Vector store:** ChromaDB
+- **Embeddings:** FastEmbed with `intfloat/multilingual-e5-small`
+- **Frontend:** Jinja2, HTML, Tailwind CSS, custom CSS, and JavaScript
+
+## 📁 Project Structure
+
+```text
+.
+├── README.md
+├── تحديد المتسبب والمتضرر في حوادث المرور.pdf  # Traffic-law knowledge base
+└── backend/
+    ├── main.py                     # Flask routes and RAG pipeline
+    ├── requirements.txt            # Python dependencies
+    ├── .env.example                # Configuration template
+    ├── README.md                   # Backend setup notes
+    ├── templates/
+    │   └── index.html              # Sentinel UI and chat sidebar
+    └── data/chroma/                # Local ChromaDB index (Git-ignored)
+```
+
+## 🚀 Getting Started
+
+### Prerequisites
 
 - Python 3.10 or newer
 - A Groq API key
-- Internet access on first install and first embedding-model download
+- Internet access for dependency installation and the first local embedding-model download
 
-## Run locally
+### Install and run (PowerShell)
 
-In PowerShell, from the repository root:
+Clone the repository and enter the backend folder:
 
 ```powershell
-cd backend
+git clone https://github.com/Omarmohammed99/Traffic-Accident-RAG-Chatbot.git
+cd Traffic-Accident-RAG-Chatbot/backend
+```
+
+Create and activate a virtual environment, then install dependencies:
+
+```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+```
+
+Create your local environment file and set your Groq key:
+
+```powershell
 Copy-Item .env.example .env
 ```
 
-Edit `backend/.env` and set `GROQ_API_KEY` to your key. The default model is configured as:
+Edit `backend/.env`:
 
 ```dotenv
+GROQ_API_KEY=your_groq_api_key
 GROQ_MODEL=llama-3.3-70b-versatile
 ```
 
-Then start the app:
+Start Flask:
 
 ```powershell
 python main.py
 ```
 
-Open [http://127.0.0.1:5000](http://127.0.0.1:5000). The first request extracts PDF text and builds the local vector index; it may take longer while the embedding model is downloaded. Put the traffic-law PDF in the repository root as `تحديد المتسبب والمتضرر في حوادث المرور.pdf`, or set `TRAFFIC_LAW_PDF` in `backend/.env` to another file path.
+Open [http://127.0.0.1:5000](http://127.0.0.1:5000). The first RAG request extracts text from the PDF and builds the local ChromaDB index. The PDF is included at the repository root; set `TRAFFIC_LAW_PDF` in `backend/.env` to use a different file.
 
-## Project structure
-
-```text
-.
-├── README.md
-├── تحديد المتسبب والمتضرر في حوادث المرور.pdf
-└── backend/
-    ├── main.py                 # Flask routes and RAG pipeline
-    ├── requirements.txt
-    ├── .env.example            # safe configuration template
-    ├── templates/
-    │   └── index.html          # Sentinel UI and chat sidebar
-    └── data/chroma/            # generated local vector index (ignored by Git)
-```
-
-## API routes
+## 🔌 API Endpoints
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `GET` | `/` | Render the application |
-| `POST` | `/analyze` | Accept form fields `party1` and `party2`; render an evidence-linked incident analysis |
-| `POST` | `/chat` | Accept JSON `{ "message": "...", "history": [] }`; return `{ "answer": "...", "sources": [...] }` |
-| `GET` | `/health` | Return service and PDF availability |
+| `GET` | `/` | Render the application interface |
+| `POST` | `/analyze` | Accept `party1` and `party2` form fields and render an evidence-linked incident analysis |
+| `POST` | `/chat` | Accept JSON `{ "message": "...", "history": [] }` and return `{ "answer": "...", "sources": [...] }` |
+| `GET` | `/health` | Report service status, model, and PDF availability |
 
-## Configuration
+## ⚙️ Configuration
 
-| Variable | Default | Purpose |
+| Variable | Default | Description |
 | --- | --- | --- |
-| `GROQ_API_KEY` | required | Groq API credential |
+| `GROQ_API_KEY` | Required | Groq API credential |
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq chat-completion model |
-| `LOCAL_EMBEDDING_MODEL` | `intfloat/multilingual-e5-small` | Local Arabic/English embedding model |
-| `TRAFFIC_LAW_PDF` | PDF in repository root | Optional path to the law document |
-| `PORT` | `5000` | Flask development server port |
+| `LOCAL_EMBEDDING_MODEL` | `intfloat/multilingual-e5-small` | Local multilingual embedding model |
+| `TRAFFIC_LAW_PDF` | Traffic PDF in repository root | Optional path to the law document |
+| `PORT` | `5000` | Flask development-server port |
 
-Never commit `.env`. The included `.gitignore` excludes environment files, virtual environments, and generated vector data. If a key has been exposed, revoke it in the provider dashboard and replace it with a new key.
+## 🔒 Security and Deployment
 
-## Deployment notes
-
-Publishing this repository to GitHub does not host the Flask application. For a live deployment, use a production WSGI server and configure `GROQ_API_KEY` as a secret in the hosting provider. Use HTTPS, protect the chat route against abuse, configure CSRF protections if browser session features are added, and decide how accident statements and logs should be retained. Keep the vector database private. Verify the PDF text extraction and legal citations with a qualified reviewer before relying on the application in real cases.
+- Never commit `.env` or expose Groq API keys. `.gitignore` excludes environment files, virtual environments, and generated ChromaDB data.
+- For production, use a WSGI server such as Gunicorn, enable HTTPS, add request throttling and appropriate CSRF protections, and set `GROQ_API_KEY` as a hosting-provider secret.
+- Decide how incident statements and logs are retained. Keep the vector database private.
+- Confirm that PDF text extraction works and have legal citations reviewed before relying on results in real cases.
