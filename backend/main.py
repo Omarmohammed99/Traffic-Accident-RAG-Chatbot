@@ -15,7 +15,7 @@ PROJECT_DIR = BASE_DIR.parent
 load_dotenv(BASE_DIR / ".env")
 
 import chromadb
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, url_for
 from groq import Groq
 from pypdf import PdfReader
 
@@ -220,6 +220,12 @@ def index():
     return render_template("index.html")
 
 
+@app.get("/analyze")
+def analyze_get():
+    """Send direct/mobile-browser visits to the form instead of showing 405."""
+    return redirect(url_for("index"))
+
+
 @app.post("/analyze")
 def analyze_route():
     party1 = request.form.get("party1", "").strip()
@@ -237,6 +243,12 @@ def analyze_route():
         app.logger.exception("Accident analysis failed")
         return render_template("index.html", error="Analysis failed. Check the server configuration and try again.", party1=party1, party2=party2), 502
     return render_template("index.html", party1=party1, party2=party2, result=result)
+
+
+@app.get("/chat")
+def chat_get():
+    """The chat is an API endpoint; direct navigation should return to the UI."""
+    return redirect(url_for("index"))
 
 
 @app.post("/chat")
