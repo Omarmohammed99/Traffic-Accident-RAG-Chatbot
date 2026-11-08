@@ -42,6 +42,8 @@ from fastembed import TextEmbedding
 from flask import Flask, jsonify, render_template, request
 from groq import Groq
 from pypdf import PdfReader
+import requests
+from urllib.parse import quote
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip() 
@@ -97,11 +99,80 @@ def get_embedder() -> TextEmbedding:
             )
             model_name = DEFAULT_EMBEDDING_MODEL
         cache_dir = os.getenv("FASTEMBED_CACHE_PATH")
-        if not cache_dir and os.getenv("VERCEL"):
-            cache_dir = "/tmp/sentinel-traffic-rag/fastembed"
-        embedder = TextEmbedding(model_name=model_name, cache_dir=cache_dir)
+        if os.getenv("VERCEL"):
+            cache_dir = cache_dir or "/tmp/sentinel-traffic-rag/fastembed"
+            model_description = next(
+                item for item in TextEmbedding.list_supported_models()
+                if item["model"].lower() == model_name.lower()
+            )
+            model_dir = Path(cache_dir) / "vercel-model"
+            download_model_files_directly(model_description, model_dir)
+            embedder = TextEmbedding(
+                model_name=model_name,
+                specific_model_path=str(model_dir),
+            )
+        else:
+            embedder = TextEmbedding(model_name=model_name, cache_dir=cache_dir)
         active_embedding_model = model_name
     return embedder
+
+
+def download_model_files_directly(model: dict, model_dir: Path) -> None:
+    """Stream required model assets straight to /tmp without Hub/Xet staging."""
+    source_repo = (model.get("sources") or {}).get("hf")
+    model_file = model.get("model_file")
+    if not source_repo or not model_file:
+        raise RuntimeError("The configured FastEmbed model has no Hugging Face source.")
+
+    listing_url = f"https://huggingface.co/api/models/{source_repo}/tree/main?recursive=true&expand=false"
+    listing_response = requests.get(listing_url, timeout=(15, 45))
+    listing_response.raise_for_status()
+    available = {
+        entry["path"]: entry
+        for entry in listing_response.json()
+        if isinstance(entry, dict) and isinstance(entry.get("path"), str)
+    }
+
+    required_names = {
+        "config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "preprocessor_config.json",
+        model_file,
+        *model.get("additional_files", []),
+    }
+    required_files = [name for name in required_names if name in available]
+    if model_file not in required_files:
+        raise RuntimeError(f"Model file {model_file!r} is missing from {source_repo}.")
+
+    model_dir.mkdir(parents=True, exist_ok=True)
+    with requests.Session() as session:
+        for filename in required_files:
+            file_info = available[filename]
+            destination = model_dir / filename
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            expected_size = file_info.get("size")
+            if destination.is_file() and destination.stat().st_size == expected_size:
+                continue
+
+            destination.unlink(missing_ok=True)
+            partial_path = destination.with_name(destination.name + ".partial")
+            partial_path.unlink(missing_ok=True)
+            url = f"https://huggingface.co/{source_repo}/resolve/main/{quote(filename, safe='/')}"
+            try:
+                with session.get(url, stream=True, timeout=(15, 180)) as response:
+                    response.raise_for_status()
+                    with partial_path.open("wb") as output:
+                        for chunk in response.iter_content(chunk_size=1024 * 1024):
+                            if chunk:
+                                output.write(chunk)
+                if expected_size is not None and partial_path.stat().st_size != expected_size:
+                    raise RuntimeError(f"Downloaded model asset {filename!r} is incomplete.")
+                partial_path.replace(destination)
+            except Exception:
+                partial_path.unlink(missing_ok=True)
+                raise
 
 
 def chunks_from_pdf() -> list[dict]:
