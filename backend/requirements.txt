@@ -1,0 +1,6 @@
+Flask>=3.1,<4
+groq>=0.18,<1
+chromadb>=1.5,<2
+pypdf>=6.0,<7
+python-dotenv>=1.0,<2
+fastembed>=0.7,<1
