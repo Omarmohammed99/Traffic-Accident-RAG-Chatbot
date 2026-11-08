@@ -31,27 +31,24 @@
             <div class="mb-6"><label for="party2" class="mb-2 block text-[9px] uppercase tracking-[.18em] text-blue-300">Party 2 statement</label><textarea id="party2" name="party2" required maxlength="5000" rows="4" dir="auto" class="w-full rounded-lg border border-blue-500/25 bg-[#001432] p-4 text-sm leading-7 text-white outline-none transition placeholder:text-slate-600 focus:border-blue-400 focus:ring-1 focus:ring-blue-500/30" placeholder="Describe what happened… / اشرح ما حدث…">{{ party2 or '' }}</textarea></div>
             <button type="submit" class="group flex w-full items-center justify-center gap-3 rounded-lg bg-gradient-to-r from-blue-700 to-blue-500 px-5 py-4 text-[10px] font-bold uppercase tracking-[.17em] text-white shadow-lg shadow-blue-950/40 transition hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-blue-300"><span>Run forensic analysis &amp; check traffic laws</span><span class="transition group-hover:translate-x-1">→</span></button>
           </form>
-          <p class="mt-3 text-center text-[9px] leading-5 text-slate-600">Analysis is based on retrieved PDF passages. It may be inconclusive when facts or citations are missing.</p>
+          <p class="mt-3 text-center text-[9px] leading-5 text-slate-600">Concise traffic-incident analysis · AR / EN</p>
         </section>
 
         {% if result %}<section aria-live="polite" class="mt-6 overflow-hidden rounded-xl border border-blue-400/30 bg-[#020e22]/95 shadow-[0_0_40px_rgba(0,102,255,.1)]">
-          <div class="flex items-center gap-3 border-b border-blue-500/20 bg-blue-950/20 px-5 py-4"><span class="h-2 w-2 rounded-full bg-[#00e87a]"></span><h2 class="font-display text-xs font-bold uppercase tracking-[.2em] text-white">Analysis verdict</h2><span class="ml-auto text-[9px] text-slate-500">EVIDENCE LINKED</span></div>
+          <div class="flex items-center gap-3 border-b border-blue-500/20 bg-blue-950/20 px-5 py-4"><span class="h-2 w-2 rounded-full bg-[#00e87a]"></span><h2 class="font-display text-xs font-bold uppercase tracking-[.2em] text-white">Analysis verdict</h2></div>
           <div dir="auto" class="whitespace-pre-wrap px-5 py-6 font-arabic text-[15px] leading-8 text-slate-100 sm:px-7">{{ result.verdict }}</div>
-          {% if result.sources %}<div class="border-t border-blue-500/15 px-5 py-5 sm:px-7"><h3 class="mb-3 text-[9px] font-semibold uppercase tracking-[.18em] text-blue-300">Retrieved PDF passages</h3><div class="space-y-3">{% for source in result.sources %}<details class="rounded-lg border border-blue-500/15 bg-[#001432]/70"><summary class="cursor-pointer px-4 py-3 text-xs text-slate-300">PDF page {{ source.page }} <span class="ml-2 text-blue-500">·</span> <span class="text-slate-500">show source text</span></summary><p dir="auto" class="border-t border-blue-500/10 px-4 py-3 font-arabic text-sm leading-7 text-slate-400">{{ source.text }}</p></details>{% endfor %}</div></div>{% endif %}
-          <div class="border-t border-blue-500/15 px-5 py-3 text-[9px] leading-5 text-slate-600">Informational assistance only. This is not an official finding of legal liability.</div>
         </section>{% endif %}
       </main>
 
       <aside class="glow flex min-h-[560px] flex-col overflow-hidden rounded-xl border border-blue-500/25 bg-[#020e22]/95 lg:sticky lg:top-5 lg:h-[calc(100vh-2.5rem)] lg:min-h-[620px]" aria-label="Legal traffic assistant">
         <div class="flex items-center gap-3 border-b border-blue-500/20 bg-blue-950/20 px-4 py-4"><div class="flex h-9 w-9 items-center justify-center rounded-lg border border-blue-400/30 bg-blue-500/10 text-blue-300">✳</div><div><h2 class="font-display text-xs font-bold uppercase tracking-[.12em] text-white">Legal assistant</h2><p class="mt-1 text-[9px] text-slate-500"><span class="text-[#00e87a]">●</span> GROQ / TRAFFIC CODE RAG</p></div><button id="clear-chat" type="button" class="ml-auto rounded border border-blue-500/20 px-2 py-1 text-[9px] uppercase tracking-wider text-slate-500 transition hover:border-blue-400/50 hover:text-blue-300" title="Clear conversation">Clear</button></div>
         <div id="chat-log" class="scrollbar flex-1 space-y-4 overflow-y-auto px-4 py-5" aria-live="polite" aria-relevant="additions">
-          <div class="flex gap-2.5"><div class="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-600/20 text-[10px] text-blue-300">S</div><div class="max-w-[88%] rounded-lg rounded-tl-none border border-blue-500/15 bg-[#001432]/70 px-3 py-3 text-xs leading-6 text-slate-300" dir="auto">Ask a question about traffic law. I’ll search the provided PDF and cite the relevant article when the source supports an answer.<br><span class="font-arabic text-slate-400">اسأل عن قانون المرور، وسأبحث في ملف القوانين وأذكر المادة عند توفرها.</span></div></div>
+          <div class="flex gap-2.5"><div class="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-600/20 text-[10px] text-blue-300">S</div><div class="max-w-[88%] rounded-lg rounded-tl-none border border-blue-500/15 bg-[#001432]/70 px-3 py-3 text-xs leading-6 text-slate-300" dir="auto">Ask a traffic-law or accident question.<br><span class="font-arabic text-slate-400">اسأل عن المرور أو الحوادث.</span></div></div>
           <div class="flex flex-wrap gap-2 pl-8"><button type="button" class="suggestion rounded-full border border-blue-500/20 px-2.5 py-1.5 text-[9px] text-blue-300 hover:border-blue-400/50 hover:bg-blue-500/10">Penalty for driving against traffic?</button><button type="button" class="suggestion rounded-full border border-blue-500/20 px-2.5 py-1.5 text-[9px] text-blue-300 hover:border-blue-400/50 hover:bg-blue-500/10">Roundabout priority?</button></div>
         </div>
         <form id="chat-form" class="border-t border-blue-500/20 p-4">
           <label for="chat-input" class="mb-2 block text-[9px] uppercase tracking-[.16em] text-slate-500">Ask a legal traffic question</label>
           <div class="flex items-end gap-2 rounded-lg border border-blue-500/25 bg-[#001432] p-2 focus-within:border-blue-400"><textarea id="chat-input" rows="2" maxlength="3000" dir="auto" class="max-h-32 min-h-[48px] flex-1 resize-y bg-transparent px-2 py-1 text-xs leading-6 text-white outline-none placeholder:text-slate-600" placeholder="Type in Arabic or English… / اكتب بالعربية أو الإنجليزية…"></textarea><button id="chat-send" type="submit" class="flex h-9 w-10 shrink-0 items-center justify-center rounded-md bg-blue-600 text-white transition hover:bg-blue-500 disabled:cursor-wait disabled:opacity-50" aria-label="Send question">↑</button></div>
-          <p class="mt-2 text-[9px] text-slate-600">Answers cite the PDF when a relevant provision is found.</p>
         </form>
       </aside>
     </div>
@@ -61,22 +58,20 @@
     (()=>{
       const form=document.getElementById('chat-form'), input=document.getElementById('chat-input'), log=document.getElementById('chat-log'), send=document.getElementById('chat-send'), clear=document.getElementById('clear-chat');
       const history=[];
-      function bubble(role,text,sources=[]){
+      function bubble(role,text){
         const row=document.createElement('div'); row.className='flex gap-2.5';
         const icon=document.createElement('div'); icon.className='mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[10px] '+(role==='user'?'bg-slate-700/60 text-slate-300':'bg-blue-600/20 text-blue-300'); icon.textContent=role==='user'?'U':'S';
         const body=document.createElement('div'); body.className='max-w-[88%] rounded-lg border px-3 py-3 text-xs leading-6 whitespace-pre-wrap '+(role==='user'?'ml-auto rounded-tr-none border-slate-700 bg-slate-800/60 text-slate-200':'rounded-tl-none border-blue-500/15 bg-[#001432]/70 text-slate-300'); body.dir='auto'; body.textContent=text;
-        if(sources.length){const citations=document.createElement('div');citations.className='mt-3 flex flex-wrap gap-1.5';sources.forEach(source=>{const tag=document.createElement('span');tag.className='rounded border border-blue-500/20 bg-blue-500/5 px-2 py-1 text-[9px] text-blue-300';tag.textContent='PDF p. '+source.page;citations.append(tag)});body.append(citations)}
         row.append(icon,body); log.append(row); log.scrollTop=log.scrollHeight; return body;
       }
       async function ask(question){
         const text=question.trim(); if(!text||send.disabled)return;
         bubble('user',text); input.value=''; send.disabled=true; send.textContent='…';
-        const pending=bubble('assistant','Searching the traffic-law PDF…');
+        const pending=bubble('assistant','Thinking…');
         try{
           const response=await fetch('{{ url_for("chat_route") }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,history})});
           const data=await response.json(); if(!response.ok)throw new Error(data.error||'Request failed');
           pending.textContent=data.answer||'No answer was returned.';
-          if(data.sources?.length){const citations=document.createElement('div');citations.className='mt-3 flex flex-wrap gap-1.5';data.sources.forEach(source=>{const tag=document.createElement('span');tag.className='rounded border border-blue-500/20 bg-blue-500/5 px-2 py-1 text-[9px] text-blue-300';tag.textContent='PDF p. '+source.page;citations.append(tag)});pending.append(citations)}
           history.push({role:'user',content:text},{role:'assistant',content:data.answer||''});
         }catch(error){pending.textContent=error.message||'Could not reach the assistant.';pending.classList.add('text-red-300')}
         finally{send.disabled=false;send.textContent='↑';input.focus();log.scrollTop=log.scrollHeight}
@@ -89,3 +84,4 @@
   </script>
 </body>
 </html>
+
